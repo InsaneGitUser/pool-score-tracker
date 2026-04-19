@@ -104,7 +104,11 @@ PIDFILE=/tmp/svkbd.pid
 
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        DISPLAY=:0 svkbd-en &
+        # -d = dock mode (no focus steal), -g = geometry (width x height at bottom)
+        # Get screen width dynamically so keyboard always fits
+        SW=$(DISPLAY=:0 xrandr 2>/dev/null | awk '/ connected/{match($0,/[0-9]+x[0-9]+/); print substr($0,RSTART,RLENGTH)}' | cut -dx -f1)
+        SW=${SW:-800}
+        DISPLAY=:0 svkbd-en -d -g ${SW}x280+0+0 &
         echo $! > $PIDFILE
     fi
 }
@@ -159,14 +163,24 @@ register = """\
 
 js = """
 <script>
-// On-screen keyboard: show on focus, hide on blur
+// On-screen keyboard: show on focus, hide on Enter or clicking away
 document.querySelectorAll('.pname').forEach(function(inp) {
   inp.addEventListener('focus', function() {
     fetch('pool://keyboard/show').catch(function(){});
   });
-  inp.addEventListener('blur', function() {
-    setTimeout(function() { fetch('pool://keyboard/hide').catch(function(){}); }, 200);
+  inp.addEventListener('keydown', function(e) {
+    // Hide keyboard when user presses Enter to confirm name
+    if (e.key === 'Enter') {
+      inp.blur();
+      fetch('pool://keyboard/hide').catch(function(){});
+    }
   });
+});
+// Hide keyboard when clicking anywhere that is not an input
+document.addEventListener('pointerdown', function(e) {
+  if (!e.target.classList.contains('pname')) {
+    fetch('pool://keyboard/hide').catch(function(){});
+  }
 });
 </script>
 """
