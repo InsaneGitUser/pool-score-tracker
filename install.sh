@@ -59,7 +59,8 @@ PKGS=(
     pkgconf
     python        # needed for source patching step
     git
-    base-devel    # provides make, fakeroot etc. for AUR builds
+    base-devel
+    make
     # svkbd deps (pre-install so makepkg --nodeps works)
     libx11
     libxft
@@ -72,16 +73,14 @@ info "Installing packages: ${PKGS[*]}"
 pacman -S --noconfirm --needed "${PKGS[@]}"
 success "All packages installed"
 
-# ── 3. Build svkbd from AUR (X11 on-screen keyboard) ─────────────────────────
-# svkbd is X11-native unlike wvkbd which is Wayland-only
-info "Building svkbd from AUR..."
+# ── 3. Build svkbd from GitHub (X11 on-screen keyboard, no AUR needed) ──────
+# svkbd is X11-native; builds with just make, needs only libx11 + libxft
+info "Building svkbd from source..."
 BUILD_DIR=/tmp/svkbd-build
 rm -rf "$BUILD_DIR"
-git clone https://aur.archlinux.org/svkbd.git "$BUILD_DIR" --depth=1
-chown -R nobody:nobody "$BUILD_DIR"
-# --nodeps: all deps pre-installed above, so no sudo needed inside makepkg
-runuser -u nobody -- sh -c "cd $BUILD_DIR && makepkg --noconfirm --nodeps -f"
-pacman -U --noconfirm "$BUILD_DIR"/*.pkg.tar.zst
+git clone https://github.com/ceemos/svkbd.git "$BUILD_DIR" --depth=1
+make -C "$BUILD_DIR" LAYOUT=mobile-intl
+make -C "$BUILD_DIR" install LAYOUT=mobile-intl PREFIX=/usr
 success "svkbd installed"
 
 # ── 4. Get the source ─────────────────────────────────────────────────────────
@@ -105,7 +104,7 @@ PIDFILE=/tmp/svkbd.pid
 
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        DISPLAY=:0 svkbd-default &
+        DISPLAY=:0 svkbd-mobile-intl &
         echo $! > $PIDFILE
     fi
 }
