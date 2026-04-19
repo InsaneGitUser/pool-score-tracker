@@ -105,7 +105,6 @@ PIDFILE=/tmp/svkbd.pid
 
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        # -d = dock mode (no focus steal), -g = geometry (width x height at bottom)
         # Get screen dimensions dynamically
         GEOM=$(DISPLAY=:0 xrandr 2>/dev/null | awk '/ connected/{match($0,/[0-9]+x[0-9]+/); print substr($0,RSTART,RLENGTH); exit}')
         SW=$(echo "$GEOM" | cut -dx -f1)
@@ -114,13 +113,24 @@ show() {
         SH=${SH:-600}
         KH=$(( SH * 35 / 100 ))
         YP=$((SH - KH))
-        # No WM present so -d (dock) does nothing; use xdotool to remove focus after spawn
+
+        # Save the currently focused window so we can return focus to it
+        FOCUSED=$(DISPLAY=:0 xdotool getwindowfocus 2>/dev/null)
+
         DISPLAY=:0 svkbd-en -g ${SW}x${KH}+0+${YP} &
         KBD_PID=$!
         echo $KBD_PID > $PIDFILE
-        # Wait for window to appear then strip focus with xdotool
+
+        # Wait for keyboard window to appear
         sleep 0.3
+
+        # Make keyboard override-redirect so it never takes focus
         DISPLAY=:0 xdotool search --pid $KBD_PID set_window --overrideredirect 1 2>/dev/null || true
+
+        # Explicitly return focus to the app window
+        if [ -n "$FOCUSED" ]; then
+            DISPLAY=:0 xdotool windowfocus "$FOCUSED" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -190,6 +200,11 @@ document.querySelectorAll('.pname').forEach(function(inp) {
 // Hide keyboard when clicking anywhere that is not an input
 document.addEventListener('pointerdown', function(e) {
   if (!e.target.classList.contains('pname')) {
+    // Blur whichever input is active so it stops intercepting keyboard
+    var active = document.activeElement;
+    if (active && active.classList.contains('pname')) {
+      active.blur();
+    }
     fetch('pool://keyboard/hide').catch(function(){});
   }
 });
