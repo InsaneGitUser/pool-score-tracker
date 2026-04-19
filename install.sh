@@ -58,6 +58,7 @@ PKGS=(
     git
     base-devel
     scdoc          # wvkbd man page dep
+    python
 )
 
 info "Installing packages: ${PKGS[*]}"
