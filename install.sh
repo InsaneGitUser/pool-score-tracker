@@ -61,10 +61,6 @@ PKGS=(
     git
     base-devel
     make
-    xdotool
-    # svkbd deps (pre-install so makepkg --nodeps works)
-    libx11
-    libxft
     # Fonts
     ttf-dejavu
     ttf-liberation
@@ -74,15 +70,9 @@ info "Installing packages: ${PKGS[*]}"
 pacman -S --noconfirm --needed "${PKGS[@]}"
 success "All packages installed"
 
-# ── 3. Build svkbd from GitHub (X11 on-screen keyboard, no AUR needed) ──────
-# svkbd is X11-native; builds with just make, needs only libx11 + libxft
-info "Building svkbd from source..."
-BUILD_DIR=/tmp/svkbd-build
-rm -rf "$BUILD_DIR"
-git clone https://github.com/ceemos/svkbd.git "$BUILD_DIR" --depth=1
-make -C "$BUILD_DIR" LAYOUT=en
-make -C "$BUILD_DIR" install LAYOUT=en PREFIX=/usr
-success "svkbd installed"
+# ── 3. (keyboard is now built into the HTML — no external keyboard needed) ───
+info "Skipping external keyboard — using built-in HTML keyboard"
+    success "Built-in keyboard ready"
 
 # ── 4. Get the source ─────────────────────────────────────────────────────────
 mkdir -p "$APP_DIR"
@@ -97,130 +87,188 @@ else
     die "No source found. Either:\n  • Put pool_webkit.c next to this script, OR\n  • Set SRC_URL at the top of this script to your raw file URL"
 fi
 
-# ── 5. Write the keyboard launcher helper ────────────────────────────────────
-cat > "$APP_DIR/kbd.sh" << 'KBD'
-#!/bin/bash
-# kbd.sh show|hide — manages svkbd for the kiosk
-PIDFILE=/tmp/svkbd.pid
+# ── 5. (keyboard is HTML-based, no kbd.sh needed)
 
-show() {
-    if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        # Get screen dimensions dynamically
-        GEOM=$(DISPLAY=:0 xrandr 2>/dev/null | awk '/ connected/{match($0,/[0-9]+x[0-9]+/); print substr($0,RSTART,RLENGTH); exit}')
-        SW=$(echo "$GEOM" | cut -dx -f1)
-        SH=$(echo "$GEOM" | cut -dx -f2)
-        SW=${SW:-800}
-        SH=${SH:-600}
-        KH=$(( SH * 35 / 100 ))
-        YP=$((SH - KH))
 
-        # Save the currently focused window so we can return focus to it
-        FOCUSED=$(DISPLAY=:0 xdotool getwindowfocus 2>/dev/null)
-
-        DISPLAY=:0 svkbd-en -g ${SW}x${KH}+0+${YP} &
-        KBD_PID=$!
-        echo $KBD_PID > $PIDFILE
-
-        # Wait for keyboard window to appear
-        sleep 0.3
-
-        # Make keyboard override-redirect so it never takes focus
-        DISPLAY=:0 xdotool search --pid $KBD_PID set_window --overrideredirect 1 2>/dev/null || true
-
-        # Explicitly return focus to the app window
-        if [ -n "$FOCUSED" ]; then
-            DISPLAY=:0 xdotool windowfocus "$FOCUSED" 2>/dev/null || true
-        fi
-    fi
-}
-
-hide() {
-    if kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        kill "$(cat $PIDFILE)" 2>/dev/null
-        rm -f $PIDFILE
-    fi
-}
-
-case "$1" in
-    show) show ;;
-    hide) hide ;;
-esac
-KBD
-chmod +x "$APP_DIR/kbd.sh"
-
-# ── 6. Patch source — inject keyboard URI handler + JS focus listeners ────────
+# ── 6. Patch source — inject HTML on-screen keyboard ─────────────────────────
 info "Patching source for on-screen keyboard..."
 
-python3 - "$APP_DIR/pool_webkit.c" << 'PY'
+python3 - "$APP_DIR/pool_webkit.c" << 'PY2'
 import sys
-
 src = open(sys.argv[1]).read()
 
-handler = """
-/* ── On-screen keyboard via custom URI scheme pool://keyboard/show|hide ── */
-static void
-kbd_uri_cb(WebKitURISchemeRequest *req, gpointer data)
-{
-    (void)data;
-    const char *uri = webkit_uri_scheme_request_get_uri(req);
-    const char *action = strrchr(uri, '/');
-    if (action) {
-        char cmd[256];
-        snprintf(cmd, sizeof(cmd), "/opt/pool_tracker/kbd.sh %s &", action + 1);
-        system(cmd);
-    }
-    GInputStream *stream = g_memory_input_stream_new_from_data("", 0, NULL);
-    webkit_uri_scheme_request_finish(req, stream, 0, "text/plain");
-    g_object_unref(stream);
+# The keyboard CSS+HTML+JS to inject just before </body>
+kbd = """
+<style>
+#osk {
+  display:none;
+  position:fixed;
+  bottom:0; left:0; right:0;
+  height:35vh;
+  background:#1a1a1a;
+  border-top:2px solid #444;
+  z-index:9999;
+  display:none;
+  flex-direction:column;
+  user-select:none;
+  -webkit-user-select:none;
 }
-"""
+#osk.osk-visible { display:flex; }
+.osk-row {
+  display:flex;
+  flex:1;
+  gap:3px;
+  padding:3px;
+}
+.osk-key {
+  flex:1;
+  background:#2e2e2e;
+  color:#fff;
+  border:1px solid #555;
+  border-radius:6px;
+  font-size:clamp(12px,2.5vw,22px);
+  font-family:sans-serif;
+  font-weight:600;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  transition:background 0.08s;
+}
+.osk-key:active, .osk-key.osk-pressed { background:#555; }
+.osk-key.osk-wide { flex:2; }
+.osk-key.osk-wider { flex:3; }
+.osk-key.osk-space { flex:6; background:#333; }
+.osk-key.osk-action { background:#c47a00; color:#fff; }
+.osk-key.osk-shift-active { background:#1a5c1a; }
+</style>
 
-register = """\
-    /* Register pool:// URI scheme for on-screen keyboard */
-    WebKitWebContext *wk_ctx = webkit_web_view_get_context(webview);
-    webkit_web_context_register_uri_scheme(wk_ctx, "pool", kbd_uri_cb, NULL, NULL);
+<div id="osk">
+  <div class="osk-row" id="osk-r1"></div>
+  <div class="osk-row" id="osk-r2"></div>
+  <div class="osk-row" id="osk-r3"></div>
+  <div class="osk-row" id="osk-r4"></div>
+</div>
 
-"""
-
-js = """
 <script>
-// On-screen keyboard: show on focus, hide on Enter or clicking away
-document.querySelectorAll('.pname').forEach(function(inp) {
-  inp.addEventListener('focus', function() {
-    fetch('pool://keyboard/show').catch(function(){});
-  });
-  inp.addEventListener('keydown', function(e) {
-    // Hide keyboard when user presses Enter to confirm name
-    if (e.key === 'Enter') {
-      inp.blur();
-      fetch('pool://keyboard/hide').catch(function(){});
-    }
-  });
-});
-// Hide keyboard when clicking anywhere that is not an input
-document.addEventListener('pointerdown', function(e) {
-  if (!e.target.classList.contains('pname')) {
-    // Blur whichever input is active so it stops intercepting keyboard
-    var active = document.activeElement;
-    if (active && active.classList.contains('pname')) {
-      active.blur();
-    }
-    fetch('pool://keyboard/hide').catch(function(){});
+(function(){
+  var ROWS = [
+    ['1','2','3','4','5','6','7','8','9','0',{l:'⌫',a:'backspace',cls:'osk-wide osk-action'}],
+    ['q','w','e','r','t','y','u','i','o','p'],
+    ['a','s','d','f','g','h','j','k','l',{l:'↵',a:'enter',cls:'osk-wide osk-action'}],
+    [{l:'⇧',a:'shift',cls:'osk-wide'},'z','x','c','v','b','n','m',
+     {l:'-',a:'-'},{l:'.',a:'.'}]
+  ];
+
+  var shifted = false;
+  var osk = document.getElementById('osk');
+  var activeInput = null;
+
+  function buildRows(){
+    ['osk-r1','osk-r2','osk-r3','osk-r4'].forEach(function(id, ri){
+      var row = document.getElementById(id);
+      row.innerHTML = '';
+      ROWS[ri].forEach(function(k){
+        var btn = document.createElement('div');
+        btn.className = 'osk-key';
+        if(typeof k === 'string'){
+          btn.textContent = shifted ? k.toUpperCase() : k;
+          btn.dataset.char = k;
+          btn.dataset.action = 'char';
+        } else {
+          btn.textContent = k.l;
+          btn.dataset.action = k.a;
+          if(k.cls) k.cls.split(' ').forEach(function(c){ btn.classList.add(c); });
+          if(k.a==='shift' && shifted) btn.classList.add('osk-shift-active');
+        }
+        // Use pointerdown so we fire before focus changes
+        btn.addEventListener('pointerdown', function(e){
+          e.preventDefault(); // critical — prevents focus leaving the input
+          e.stopPropagation();
+          handleKey(btn);
+        });
+        row.appendChild(btn);
+      });
+      // Add space bar to last row
+      if(ri===3){
+        var sp = document.createElement('div');
+        sp.className = 'osk-key osk-space';
+        sp.textContent = 'SPACE';
+        sp.dataset.action = 'space';
+        sp.addEventListener('pointerdown', function(e){
+          e.preventDefault();
+          e.stopPropagation();
+          handleKey(sp);
+        });
+        row.appendChild(sp);
+      }
+    });
   }
-});
+
+  function handleKey(btn){
+    if(!activeInput) return;
+    var action = btn.dataset.action;
+    if(action === 'char'){
+      var ch = shifted ? btn.dataset.char.toUpperCase() : btn.dataset.char;
+      insertAtCursor(activeInput, ch);
+      if(shifted){ shifted=false; buildRows(); }
+    } else if(action === 'backspace'){
+      var v=activeInput.value, s=activeInput.selectionStart;
+      if(s>0){
+        activeInput.value = v.slice(0,s-1)+v.slice(activeInput.selectionEnd);
+        activeInput.selectionStart = activeInput.selectionEnd = s-1;
+      }
+    } else if(action === 'enter'){
+      hideOsk();
+    } else if(action === 'shift'){
+      shifted = !shifted;
+      buildRows();
+    } else if(action === 'space'){
+      insertAtCursor(activeInput, ' ');
+    } else {
+      insertAtCursor(activeInput, action);
+    }
+  }
+
+  function insertAtCursor(inp, ch){
+    var s=inp.selectionStart, e=inp.selectionEnd;
+    inp.value = inp.value.slice(0,s)+ch+inp.value.slice(e);
+    inp.selectionStart = inp.selectionEnd = s+ch.length;
+  }
+
+  function showOsk(inp){
+    activeInput = inp;
+    osk.classList.add('osk-visible');
+  }
+
+  function hideOsk(){
+    osk.classList.remove('osk-visible');
+    if(activeInput){ activeInput.blur(); activeInput=null; }
+  }
+
+  buildRows();
+
+  // Show when a name input is focused
+  document.querySelectorAll('.pname').forEach(function(inp){
+    inp.addEventListener('focus', function(){ showOsk(inp); });
+  });
+
+  // Hide when tapping outside keyboard and outside inputs
+  document.addEventListener('pointerdown', function(e){
+    if(!osk.contains(e.target) && !e.target.classList.contains('pname')){
+      hideOsk();
+    }
+  });
+})();
 </script>
 """
 
-src = src.replace('#include <webkit2/webkit2.h>',
-                  '#include <webkit2/webkit2.h>\n#include <stdlib.h>', 1)
-src = src.replace('/* ── Key handler', handler + '\n/* ── Key handler', 1)
-src = src.replace('    webkit_web_view_load_html(',
-                  register + '    webkit_web_view_load_html(', 1)
-src = src.replace('</body>', js + '</body>', 1)
-
+src = src.replace('</body>', kbd + '</body>', 1)
 open(sys.argv[1], 'w').write(src)
 print("Patched OK")
-PY
+PY2
+
 
 # ── 7. Compile ────────────────────────────────────────────────────────────────
 info "Compiling..."
