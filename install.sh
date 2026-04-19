@@ -42,42 +42,47 @@ info "Syncing package databases..."
 pacman -Sy --noconfirm
 
 PKGS=(
+    # Minimal X server
     xorg-server
     xorg-xinit
     xorg-xrandr
+    # Touchscreen input drivers
     xf86-input-libinput
     xf86-input-evdev
+    # Safe GPU fallback
     xf86-video-vesa
+    # App runtime
     gtk3
     webkit2gtk-4.1
+    # Build tools
     gcc
     pkgconf
+    python        # needed for source patching step
+    git
+    base-devel    # provides make, fakeroot etc. for AUR builds
+    # svkbd deps (pre-install so makepkg --nodeps works)
+    libx11
+    libxft
+    # Fonts
     ttf-dejavu
     ttf-liberation
-    # needed to build wvkbd from AUR
-    git
-    base-devel
-    scdoc          # wvkbd man page dep
-    python3
 )
 
 info "Installing packages: ${PKGS[*]}"
 pacman -S --noconfirm --needed "${PKGS[@]}"
 success "All packages installed"
 
-# ── 3. Build wvkbd from AUR (no AUR helper needed — just git + makepkg) ───────
-info "Building wvkbd from AUR..."
-BUILD_DIR=/tmp/wvkbd-build
+# ── 3. Build svkbd from AUR (X11 on-screen keyboard) ─────────────────────────
+# svkbd is X11-native unlike wvkbd which is Wayland-only
+info "Building svkbd from AUR..."
+BUILD_DIR=/tmp/svkbd-build
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
-
-# makepkg refuses to run as root — run it as the kiosk user
-git clone https://aur.archlinux.org/wvkbd.git "$BUILD_DIR" --depth=1
-chown -R "$APP_USER:$APP_USER" "$BUILD_DIR"
+git clone https://aur.archlinux.org/svkbd.git "$BUILD_DIR" --depth=1
 chown -R nobody:nobody "$BUILD_DIR"
- runuser -u nobody -- sh -c "cd $BUILD_DIR && makepkg --noconfirm --nodeps -f"
- pacman -U --noconfirm $BUILD_DIR/*.pkg.tar.zst
-success "wvkbd installed"
+# --nodeps: all deps pre-installed above, so no sudo needed inside makepkg
+runuser -u nobody -- sh -c "cd $BUILD_DIR && makepkg --noconfirm --nodeps -f"
+pacman -U --noconfirm "$BUILD_DIR"/*.pkg.tar.zst
+success "svkbd installed"
 
 # ── 4. Get the source ─────────────────────────────────────────────────────────
 mkdir -p "$APP_DIR"
@@ -95,12 +100,12 @@ fi
 # ── 5. Write the keyboard launcher helper ────────────────────────────────────
 cat > "$APP_DIR/kbd.sh" << 'KBD'
 #!/bin/bash
-# kbd.sh show|hide — manages wvkbd for the kiosk
-PIDFILE=/tmp/wvkbd.pid
+# kbd.sh show|hide — manages svkbd for the kiosk
+PIDFILE=/tmp/svkbd.pid
 
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        DISPLAY=:0 wvkbd-mobintl --hidden --landscape -L 280 &
+        DISPLAY=:0 svkbd-default &
         echo $! > $PIDFILE
     fi
 }
@@ -262,7 +267,7 @@ echo -e "${BOLD}${GREEN}══════════════════�
 echo ""
 echo -e "  App binary :  ${CYAN}$APP_BIN${NC}"
 echo -e "  Kiosk user :  ${CYAN}$APP_USER${NC}"
-echo -e "  Keyboard   :  ${CYAN}wvkbd (appears when tapping name fields)${NC}"
+echo -e "  Keyboard   :  ${CYAN}svkbd (appears when tapping name fields)${NC}"
 echo -e "  startx log :  ${CYAN}/tmp/startx.log${NC}"
 echo ""
 echo -e "  ${YELLOW}Reboot to start the kiosk:${NC}  sudo reboot"
