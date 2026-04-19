@@ -20,7 +20,7 @@ die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 APP_USER="${SUDO_USER:-pool}"          # user that will run the kiosk session
 APP_DIR="/opt/pool_tracker"
 APP_BIN="$APP_DIR/pool_tracker"
-SRC_URL="https://raw.githubusercontent.com/InsaneGitUser/pool-score-tracker/main/pool_webkit.c"
+SRC_URL="https://raw.githubusercontent.com/your-user/your-repo/main/pool_webkit.c"
 # If you don't have a URL yet, place pool_webkit.c beside this script instead.
 LOCAL_SRC="$(dirname "$(realpath "$0")")/pool_webkit.c"
 
@@ -46,8 +46,8 @@ PKGS=(
     # Minimal X server (no display manager, no desktop)
     xorg-server
     xorg-xinit
-    xorg-xrandr          # optional: rotate/resolution tweaks at startup
-    xf86-video-vesa      # safe fallback GPU driver (works on anything)
+    xorg-xrandr
+    xf86-video-vesa      # safe fallback GPU driver (works on bare metal + VMs)
 
     # GTK + WebKitGTK (the app's runtime)
     gtk3
@@ -91,29 +91,38 @@ success "Compiled → $APP_BIN"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 chmod +x "$APP_BIN"
 
-# ── 6. Global xinitrc — just launch the pool app, nothing else ───────────────
+# ── 6. Global xinitrc — auto-detect resolution, launch app fullscreen ─────────
 info "Writing /etc/X11/xinit/xinitrc..."
-cat > /etc/X11/xinit/xinitrc << EOF
+cat > /etc/X11/xinit/xinitrc << 'XINITRC'
 #!/bin/sh
-# Kiosk xinitrc — starts the pool tracker and exits X when it closes
+# Kiosk xinitrc — auto-detects display, forces fullscreen, launches pool tracker
 
 # Disable screen blanking / DPMS
 xset s off
 xset -dpms
 xset s noblank
 
+# Auto-detect connected output and its highest available resolution,
+# then apply it. Works on bare metal, VirtualBox, QEMU/KVM, etc.
+OUTPUT=$(xrandr | awk '/ connected/{print $1; exit}')
+MODE=$(xrandr | awk "/^$OUTPUT/{found=1; next} found && /^[[:space:]]+[0-9]/{print $1; exit}")
+if [ -n "$OUTPUT" ] && [ -n "$MODE" ]; then
+    xrandr --output "$OUTPUT" --mode "$MODE"
+fi
+
 # Hide the mouse cursor after 1 second of inactivity (needs unclutter if installed)
 command -v unclutter &>/dev/null && unclutter -idle 1 -root &
 
 # Launch the app — X exits when this process exits
-exec $APP_BIN
-EOF
+XINITRC
+
+# Append the binary path (it contains a variable so can't be in single-quoted heredoc)
+echo "exec $APP_BIN" >> /etc/X11/xinit/xinitrc
+
 chmod +x /etc/X11/xinit/xinitrc
 success "xinitrc written"
 
 # ── 7. getty autologin on tty1 — let systemd own tty1 normally ───────────────
-# Much safer than masking getty. systemd logs in the kiosk user automatically,
-# then .bash_profile fires startx. Boot/fsck proceeds completely untouched.
 info "Configuring getty autologin for $APP_USER on tty1..."
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
@@ -148,11 +157,10 @@ echo -e "${BOLD}${GREEN}══════════════════�
 echo ""
 echo -e "  App binary :  ${CYAN}$APP_BIN${NC}"
 echo -e "  Kiosk user :  ${CYAN}$APP_USER${NC}"
-echo -e "  Service    :  ${CYAN}pool-kiosk.service${NC}"
 echo -e "  xinitrc    :  ${CYAN}/etc/X11/xinit/xinitrc${NC}"
 echo ""
 echo -e "  ${YELLOW}Reboot to start the kiosk:${NC}  sudo reboot"
 echo -e "  ${YELLOW}Exit the app:${NC}               Press Escape or Q  (drops back to tty1)"
 echo -e "  ${YELLOW}Disable autologin:${NC}          rm /etc/systemd/system/getty@tty1.service.d/autologin.conf"
-echo -e "  ${YELLOW}Switch to another tty:${NC}      Ctrl+Alt+F2  (tty1 stays as the kiosk)"
+echo -e "  ${YELLOW}Switch to another tty:${NC}      Ctrl+Alt+F2"
 echo ""
