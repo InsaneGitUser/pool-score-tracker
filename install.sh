@@ -20,7 +20,7 @@ die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 APP_USER="${SUDO_USER:-pool}"          # user that will run the kiosk session
 APP_DIR="/opt/pool_tracker"
 APP_BIN="$APP_DIR/pool_tracker"
-SRC_URL="https://raw.githubusercontent.com/your-user/your-repo/main/pool_webkit.c"
+SRC_URL="https://raw.githubusercontent.com/InsaneGitUser/pool-score-tracker/main/pool_webkit.c"
 # If you don't have a URL yet, place pool_webkit.c beside this script instead.
 LOCAL_SRC="$(dirname "$(realpath "$0")")/pool_webkit.c"
 
