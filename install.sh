@@ -101,7 +101,6 @@ cat > /etc/X11/xinit/xinitrc << 'XINITRC'
 xset s off
 xset -dpms
 xset s noblank
-exec twm
 # Auto-detect connected output and its highest available resolution,
 # then apply it. Works on bare metal, VirtualBox, QEMU/KVM, etc.
 OUTPUT=$(xrandr | awk '/ connected/{print $1; exit}')
