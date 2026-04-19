@@ -20,7 +20,7 @@ die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 APP_USER="${SUDO_USER:-pool}"          # user that will run the kiosk session
 APP_DIR="/opt/pool_tracker"
 APP_BIN="$APP_DIR/pool_tracker"
-SRC_URL="https://raw.githubusercontent.com/InsaneGitUser/pool-score-tracker/main/pool_webkit.c"
+SRC_URL="https://raw.githubusercontent.com/your-user/your-repo/main/pool_webkit.c"
 # If you don't have a URL yet, place pool_webkit.c beside this script instead.
 LOCAL_SRC="$(dirname "$(realpath "$0")")/pool_webkit.c"
 
@@ -111,46 +111,31 @@ EOF
 chmod +x /etc/X11/xinit/xinitrc
 success "xinitrc written"
 
-# ── 7. systemd service — startx as the kiosk user on boot ────────────────────
-info "Writing systemd service..."
-cat > /etc/systemd/system/pool-kiosk.service << EOF
-[Unit]
-Description=8-Ball Pool Tracker Kiosk
-After=systemd-user-sessions.service
-After=network.target
-
+# ── 7. getty autologin on tty1 — let systemd own tty1 normally ───────────────
+# Much safer than masking getty. systemd logs in the kiosk user automatically,
+# then .bash_profile fires startx. Boot/fsck proceeds completely untouched.
+info "Configuring getty autologin for $APP_USER on tty1..."
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
 [Service]
-Type=simple
-User=$APP_USER
-PAMName=login
-Environment=XDG_SESSION_TYPE=x11
-Environment=DISPLAY=:0
-
-# startx wraps xinit which reads /etc/X11/xinit/xinitrc
-ExecStart=/usr/bin/startx -- :0 vt1
-
-# Restart automatically if the app crashes (remove if you'd rather it stays off)
-Restart=on-failure
-RestartSec=3
-
-# Give the GPU a moment on first boot
-TimeoutStartSec=30
-
-[Install]
-WantedBy=multi-user.target
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $APP_USER --noclear %I \$TERM
 EOF
-
 systemctl daemon-reload
-systemctl enable pool-kiosk.service
-success "pool-kiosk.service enabled"
+success "getty autologin configured"
 
-# ── 8. Disable getty on tty1 so our service owns it cleanly ──────────────────
-info "Masking getty@tty1 (our service owns tty1)..."
-systemctl mask getty@tty1.service
-success "getty@tty1 masked"
+# ── 8. .bash_profile — startx fires on tty1 login, not SSH/other ttys ────────
+info "Writing $APP_USER .bash_profile..."
+cat > /home/$APP_USER/.bash_profile << 'PROFILE'
+# Auto-start X only on tty1 (not SSH, not tty2, etc.)
+if [[ -z $DISPLAY ]] && [[ $(tty) == /dev/tty1 ]]; then
+    exec startx
+fi
+PROFILE
+chown "$APP_USER:$APP_USER" /home/$APP_USER/.bash_profile
+success ".bash_profile written"
 
-# ── 9. Allow the kiosk user to run startx without a tty login ────────────────
-# startx/Xorg needs the user to be in the 'input' and 'video' groups
+# ── 9. Allow the kiosk user to run startx ────────────────────────────────────
 info "Adding $APP_USER to input and video groups..."
 usermod -aG input,video "$APP_USER"
 success "Groups updated"
@@ -167,7 +152,7 @@ echo -e "  Service    :  ${CYAN}pool-kiosk.service${NC}"
 echo -e "  xinitrc    :  ${CYAN}/etc/X11/xinit/xinitrc${NC}"
 echo ""
 echo -e "  ${YELLOW}Reboot to start the kiosk:${NC}  sudo reboot"
-echo -e "  ${YELLOW}Stop the kiosk:${NC}             sudo systemctl stop pool-kiosk"
-echo -e "  ${YELLOW}Disable on boot:${NC}            sudo systemctl disable pool-kiosk"
-echo -e "  ${YELLOW}Exit the app:${NC}               Press Escape or Q"
+echo -e "  ${YELLOW}Exit the app:${NC}               Press Escape or Q  (drops back to tty1)"
+echo -e "  ${YELLOW}Disable autologin:${NC}          rm /etc/systemd/system/getty@tty1.service.d/autologin.conf"
+echo -e "  ${YELLOW}Switch to another tty:${NC}      Ctrl+Alt+F2  (tty1 stays as the kiosk)"
 echo ""
