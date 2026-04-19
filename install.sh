@@ -73,7 +73,8 @@ mkdir -p "$BUILD_DIR"
 # makepkg refuses to run as root — run it as the kiosk user
 git clone https://aur.archlinux.org/wvkbd.git "$BUILD_DIR" --depth=1
 chown -R "$APP_USER:$APP_USER" "$BUILD_DIR"
-runuser -l "$APP_USER" -c "cd $BUILD_DIR && makepkg -si --noconfirm"
+runuser -l "$APP_USER" -c "cd $BUILD_DIR && makepkg --noconfirm --nodeps -f"
+ pacman -U --noconfirm $BUILD_DIR/*.pkg.tar.zst
 success "wvkbd installed"
 
 # ── 4. Get the source ─────────────────────────────────────────────────────────
