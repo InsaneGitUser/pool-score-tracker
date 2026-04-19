@@ -680,6 +680,8 @@ int main(int argc, char *argv[])
 
     /* WebView */
     WebKitWebView *webview = WEBKIT_WEB_VIEW(webkit_web_view_new());
+    gtk_widget_set_hexpand(webview, TRUE);
+gtk_widget_set_vexpand(webview, TRUE);
 
     /* Settings: enable JS, smooth scrolling, hardware acceleration */
     WebKitSettings *settings = webkit_web_view_get_settings(webview);
@@ -695,7 +697,10 @@ int main(int argc, char *argv[])
     /* Load the embedded HTML */
     webkit_web_view_load_html(webview, HTML, NULL);
 
-    gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(webview));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+gtk_container_add(GTK_CONTAINER(window), box);
+
+gtk_box_pack_start(GTK_BOX(box), webview, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
 
     gtk_main();
