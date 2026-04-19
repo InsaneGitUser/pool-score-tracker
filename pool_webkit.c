@@ -651,37 +651,20 @@ render(1); render(2); update8();
 </html>
 )HTML";
 
-/* ── Key handler: Escape or Q to quit ── */
-static gboolean on_key_press(GtkWidget *w, GdkEventKey *e, gpointer d)
-{
-    (void)w; (void)d;
-    if (e->keyval == GDK_KEY_Escape ||
-        e->keyval == GDK_KEY_q ||
-        e->keyval == GDK_KEY_Q)
-        gtk_main_quit();
-    return FALSE;
-}
-
 /* ── Main ── */
 int main(int argc, char *argv[])
 {
     gtk_init(&argc, &argv);
 
-    /* Window — borderless fullscreen kiosk mode */
+    /* Window */
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "8-Ball Pool Tracker");
-    gtk_window_set_decorated(GTK_WINDOW(window), FALSE);   /* no title bar   */
-    gtk_window_fullscreen(GTK_WINDOW(window));             /* true fullscreen */
+    gtk_window_set_default_size(GTK_WINDOW(window), 720, 520);
+    gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-
-    /* Escape or Q quits */
-    g_signal_connect(window, "key-press-event",
-                     G_CALLBACK(on_key_press), NULL);
 
     /* WebView */
     WebKitWebView *webview = WEBKIT_WEB_VIEW(webkit_web_view_new());
-    gtk_widget_set_hexpand(webview, TRUE);
-gtk_widget_set_vexpand(webview, TRUE);
 
     /* Settings: enable JS, smooth scrolling, hardware acceleration */
     WebKitSettings *settings = webkit_web_view_get_settings(webview);
@@ -697,10 +680,7 @@ gtk_widget_set_vexpand(webview, TRUE);
     /* Load the embedded HTML */
     webkit_web_view_load_html(webview, HTML, NULL);
 
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-gtk_container_add(GTK_CONTAINER(window), box);
-
-gtk_box_pack_start(GTK_BOX(box), webview, TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(webview));
     gtk_widget_show_all(window);
 
     gtk_main();
