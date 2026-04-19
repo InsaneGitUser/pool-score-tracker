@@ -17,11 +17,10 @@ die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "Run this script as root (sudo ./install_pool_kiosk.sh)"
 
 # ── Config ────────────────────────────────────────────────────────────────────
-APP_USER="${SUDO_USER:-pool}"          # user that will run the kiosk session
+APP_USER="${SUDO_USER:-pool}"
 APP_DIR="/opt/pool_tracker"
 APP_BIN="$APP_DIR/pool_tracker"
 SRC_URL="https://raw.githubusercontent.com/InsaneGitUser/pool-score-tracker/main/pool_webkit.c"
-# If you don't have a URL yet, place pool_webkit.c beside this script instead.
 LOCAL_SRC="$(dirname "$(realpath "$0")")/pool_webkit.c"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,21 +42,14 @@ info "Syncing package databases..."
 pacman -Sy --noconfirm
 
 PKGS=(
-    # Minimal X server (no display manager, no desktop)
     xorg-server
     xorg-xinit
     xorg-xrandr
-    xf86-video-vesa      # safe fallback GPU driver (works on bare metal + VMs)
-
-    # GTK + WebKitGTK (the app's runtime)
+    xf86-video-vesa
     gtk3
     webkit2gtk-4.1
-
-    # Build tools
     gcc
     pkgconf
-
-    # Fonts (so the app doesn't look broken)
     ttf-dejavu
     ttf-liberation
 )
@@ -91,59 +83,82 @@ success "Compiled → $APP_BIN"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 chmod +x "$APP_BIN"
 
-# ── 6. Global xinitrc — auto-detect resolution, launch app fullscreen ─────────
+# ── 6. Silence the kernel boot log (quiet + no console messages) ──────────────
+info "Silencing boot messages in /etc/default/grub..."
+if [[ -f /etc/default/grub ]]; then
+    # Add quiet, loglevel=0, vt.global_cursor_default=0 to kernel line
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 rd.systemd.show_status=false vt.global_cursor_default=0"/' /etc/default/grub
+    grub-mkconfig -o /boot/grub/grub.cfg &>/dev/null
+    success "GRUB updated — boot will be silent"
+else
+    warn "/etc/default/grub not found — skipping (maybe systemd-boot?)"
+fi
+
+# ── 7. Global xinitrc — auto-detect resolution, launch app fullscreen ─────────
 info "Writing /etc/X11/xinit/xinitrc..."
 cat > /etc/X11/xinit/xinitrc << 'XINITRC'
 #!/bin/sh
-# Kiosk xinitrc — auto-detects display, forces fullscreen, launches pool tracker
+# Kiosk xinitrc — silent, auto-detects display, launches pool tracker
 
 # Disable screen blanking / DPMS
 xset s off
 xset -dpms
 xset s noblank
-# Auto-detect connected output and its highest available resolution,
-# then apply it. Works on bare metal, VirtualBox, QEMU/KVM, etc.
-OUTPUT=$(xrandr | awk '/ connected/{print $1; exit}')
-MODE=$(xrandr | awk "/^$OUTPUT/{found=1; next} found && /^[[:space:]]+[0-9]/{print $1; exit}")
+
+# Auto-detect connected output and apply its highest resolution
+OUTPUT=$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}')
+MODE=$(xrandr 2>/dev/null | awk "/^$OUTPUT/{found=1; next} found && /^[[:space:]]+[0-9]/{print $1; exit}")
 if [ -n "$OUTPUT" ] && [ -n "$MODE" ]; then
-    xrandr --output "$OUTPUT" --mode "$MODE"
+    xrandr --output "$OUTPUT" --mode "$MODE" 2>/dev/null
 fi
 
-# Hide the mouse cursor after 1 second of inactivity (needs unclutter if installed)
+# Hide cursor after 1s idle
 command -v unclutter &>/dev/null && unclutter -idle 1 -root &
 
-# Launch the app — X exits when this process exits
+# Launch — X exits when app exits
 XINITRC
 
-# Append the binary path (it contains a variable so can't be in single-quoted heredoc)
 echo "exec $APP_BIN" >> /etc/X11/xinit/xinitrc
-
 chmod +x /etc/X11/xinit/xinitrc
 success "xinitrc written"
 
-# ── 7. getty autologin on tty1 — let systemd own tty1 normally ───────────────
+# ── 8. getty autologin — silent, no last-login message ───────────────────────
 info "Configuring getty autologin for $APP_USER on tty1..."
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin $APP_USER --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin $APP_USER --noclear --skip-login --nonewline --noissue %I \$TERM
 EOF
 systemctl daemon-reload
 success "getty autologin configured"
 
-# ── 8. .bash_profile — startx fires on tty1 login, not SSH/other ttys ────────
+# ── 9. Silence /etc/issue (the pre-login banner) ─────────────────────────────
+info "Clearing /etc/issue..."
+truncate -s 0 /etc/issue
+truncate -s 0 /etc/issue.net 2>/dev/null || true
+success "/etc/issue cleared"
+
+# ── 10. .bash_profile — clear screen then startx, all output suppressed ───────
 info "Writing $APP_USER .bash_profile..."
 cat > /home/$APP_USER/.bash_profile << 'PROFILE'
-# Auto-start X only on tty1 (not SSH, not tty2, etc.)
+# Auto-start X on tty1 only, with no visible log output
 if [[ -z $DISPLAY ]] && [[ $(tty) == /dev/tty1 ]]; then
-    exec startx
+    # Clear any login text off the screen
+    clear
+    # Suppress all startx/xinit/Xorg output — errors go to a log file instead
+    exec startx >/tmp/startx.log 2>&1
 fi
 PROFILE
 chown "$APP_USER:$APP_USER" /home/$APP_USER/.bash_profile
 success ".bash_profile written"
 
-# ── 9. Allow the kiosk user to run startx ────────────────────────────────────
+# ── 11. Suppress the MOTD / last-login line for this user ────────────────────
+touch /home/$APP_USER/.hushlogin
+chown "$APP_USER:$APP_USER" /home/$APP_USER/.hushlogin
+success ".hushlogin created (suppresses last login message)"
+
+# ── 12. Allow the kiosk user to run startx ───────────────────────────────────
 info "Adding $APP_USER to input and video groups..."
 usermod -aG input,video "$APP_USER"
 success "Groups updated"
@@ -157,6 +172,7 @@ echo ""
 echo -e "  App binary :  ${CYAN}$APP_BIN${NC}"
 echo -e "  Kiosk user :  ${CYAN}$APP_USER${NC}"
 echo -e "  xinitrc    :  ${CYAN}/etc/X11/xinit/xinitrc${NC}"
+echo -e "  startx log :  ${CYAN}/tmp/startx.log${NC}  (errors land here)"
 echo ""
 echo -e "  ${YELLOW}Reboot to start the kiosk:${NC}  sudo reboot"
 echo -e "  ${YELLOW}Exit the app:${NC}               Press Escape or Q  (drops back to tty1)"
