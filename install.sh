@@ -61,6 +61,7 @@ PKGS=(
     git
     base-devel
     make
+    xdotool
     # svkbd deps (pre-install so makepkg --nodeps works)
     libx11
     libxft
@@ -105,11 +106,21 @@ PIDFILE=/tmp/svkbd.pid
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
         # -d = dock mode (no focus steal), -g = geometry (width x height at bottom)
-        # Get screen width dynamically so keyboard always fits
-        SW=$(DISPLAY=:0 xrandr 2>/dev/null | awk '/ connected/{match($0,/[0-9]+x[0-9]+/); print substr($0,RSTART,RLENGTH)}' | cut -dx -f1)
+        # Get screen dimensions dynamically
+        GEOM=$(DISPLAY=:0 xrandr 2>/dev/null | awk '/ connected/{match($0,/[0-9]+x[0-9]+/); print substr($0,RSTART,RLENGTH); exit}')
+        SW=$(echo "$GEOM" | cut -dx -f1)
+        SH=$(echo "$GEOM" | cut -dx -f2)
         SW=${SW:-800}
-        DISPLAY=:0 svkbd-en -d -g ${SW}x280+0+0 &
-        echo $! > $PIDFILE
+        SH=${SH:-600}
+        KH=$(( SH * 35 / 100 ))
+        YP=$((SH - KH))
+        # No WM present so -d (dock) does nothing; use xdotool to remove focus after spawn
+        DISPLAY=:0 svkbd-en -g ${SW}x${KH}+0+${YP} &
+        KBD_PID=$!
+        echo $KBD_PID > $PIDFILE
+        # Wait for window to appear then strip focus with xdotool
+        sleep 0.3
+        DISPLAY=:0 xdotool search --pid $KBD_PID set_window --overrideredirect 1 2>/dev/null || true
     fi
 }
 
