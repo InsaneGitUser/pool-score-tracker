@@ -79,8 +79,8 @@ info "Building svkbd from source..."
 BUILD_DIR=/tmp/svkbd-build
 rm -rf "$BUILD_DIR"
 git clone https://github.com/ceemos/svkbd.git "$BUILD_DIR" --depth=1
-make -C "$BUILD_DIR" LAYOUT=mobile-intl
-make -C "$BUILD_DIR" install LAYOUT=mobile-intl PREFIX=/usr
+make -C "$BUILD_DIR" LAYOUT=en
+make -C "$BUILD_DIR" install LAYOUT=en PREFIX=/usr
 success "svkbd installed"
 
 # ── 4. Get the source ─────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ PIDFILE=/tmp/svkbd.pid
 
 show() {
     if ! kill -0 "$(cat $PIDFILE 2>/dev/null)" 2>/dev/null; then
-        DISPLAY=:0 svkbd-mobile-intl &
+        DISPLAY=:0 svkbd-en &
         echo $! > $PIDFILE
     fi
 }
